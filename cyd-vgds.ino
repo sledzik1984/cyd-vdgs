@@ -13,20 +13,36 @@
 
 TFT_eSPI tft = TFT_eSPI();
 
-const String vatsim_data_url = "https://data.vatsim.net/v3/vatsim-data.json";
-const String vacdm_servers[] = {
-  "https://app.vacdm.net",
-  "https://vacdm.vatita.net",
-  "https://cdm.vatsim-scandinavia.org",
-  "https://cdm.vatsim.fr",
-  "https://vacdm.vatprc.net",
-  "https://vacdm.vacc-austria.org",
-  "https://vacdm.vatsim.me"
+struct VacdmSlotInfo {
+  String tobt = "";
+  String tsat = "";
+  String sid = "";
+  String runway = "";
+  bool hasRunway = false;
 };
+
+
+const String vatsim_data_url = "https://data.vatsim.net/v3/vatsim-data.json";
+struct VacdmServer {
+  String baseUrl;
+  bool scandinavianFormat;  // true = /api/v1/pilots/CALLSIGN, false = ?callsign=CALLSIGN
+};
+
+const VacdmServer vacdm_servers[] = {
+  { "https://app.vacdm.net/api/v1/pilots", true },
+  { "https://vacdm.vatita.net/api/v1/pilots", true },
+  { "https://cdm.vatsim-scandinavia.org/api/v1/pilots", true },
+  { "https://cdm.vatsim.fr/api/v1/pilots", true },
+  { "https://vacdm.vatprc.net/api/v1/pilots", true },
+  { "https://vacdm.vacc-austria.org/api/v1/pilots", true },
+  { "https://cdm-server-production.up.railway.app/slotService/callsign", false } // Hiszpania
+};
+
 const size_t vacdm_server_count = sizeof(vacdm_servers) / sizeof(vacdm_servers[0]);
 
+
 String getCallsignFromCid(String cid);
-String getVacdmData(String callsign);
+// String getVacdmData(String callsign);
 void displayData(const String& callsign, const String& dataJson);
 
 unsigned long lastUpdate = 0;
@@ -75,8 +91,8 @@ void setup() {
     return;
   }
 
-  String vacdm_data = getVacdmData(callsign);
-  displayData(callsign, vacdm_data);
+  VacdmSlotInfo vacdm_slot = getVacdmData(callsign);
+  displayData(callsign, vacdm_slot);
 }
 
 void loop() {
@@ -89,7 +105,8 @@ void loop() {
       return;
     }
 
-    String vacdm_data = getVacdmData(callsign);
+    VacdmSlotInfo vacdm_data = getVacdmData(callsign);
+
     displayData(callsign, vacdm_data);
 
     lastUpdate = millis();
@@ -135,9 +152,15 @@ String getCallsignFromCid(String cid) {
 
 
 
-String getVacdmData(String callsign) {
+VacdmSlotInfo getVacdmData(String callsign) {
+  VacdmSlotInfo slot;
+
   for (size_t i = 0; i < vacdm_server_count; ++i) {
-    String url = vacdm_servers[i] + "/api/v1/pilots/" + callsign;
+    const VacdmServer& server = vacdm_servers[i];
+    String url = server.scandinavianFormat
+                   ? server.baseUrl
+                   : server.baseUrl + "?callsign=" + callsign;
+
     Serial.print("[vACDM] Próba: ");
     Serial.println(url);
 
@@ -145,20 +168,64 @@ String getVacdmData(String callsign) {
     http.begin(url);
     int httpCode = http.GET();
 
-    if (httpCode == 200) {
-      String payload = http.getString();
-      http.end();
-      Serial.println("[vACDM] OK");
-      return payload;
-    } else {
+    if (httpCode != 200) {
       Serial.print("[vACDM] Błąd HTTP: ");
       Serial.println(httpCode);
+      http.end();
+      continue;
     }
+
+    String payload = http.getString();
     http.end();
+
+    DynamicJsonDocument doc(server.scandinavianFormat ? 16384 : 4096);
+    DeserializationError err = deserializeJson(doc, payload);
+    if (err) {
+      Serial.print("[vACDM] Błąd JSON: ");
+      Serial.println(err.c_str());
+      continue;
+    }
+
+    if (server.scandinavianFormat) {
+      // Format tablicowy — musimy znaleźć callsign
+      JsonArray arr = doc.as<JsonArray>();
+      bool found = false;
+
+      for (size_t j = 0; j < arr.size(); ++j) {
+        JsonObject item = arr[j];
+        if (item["callsign"] == callsign) {
+          slot.tobt = item["vacdm"]["tobt"] | "";
+          slot.tsat = item["vacdm"]["tsat"] | "";
+          slot.sid  = item["clearance"]["sid"] | "---";
+
+          if (item["clearance"].containsKey("dep_rwy")) {
+            slot.runway = item["clearance"]["dep_rwy"] | "??";
+            slot.hasRunway = true;
+          }
+
+          found = true;
+          break;
+        }
+      }
+
+      if (!found) {
+        Serial.println("[vACDM] Callsign nie znaleziony w tablicy.");
+        continue;
+      }
+
+    } else {
+      // Format prosty (Hiszpania)
+      slot.tobt = doc["tobt"] | "";
+      slot.tsat = doc["tsat"] | "";
+      slot.sid  = doc["sid"] | "---";
+      slot.hasRunway = false;
+    }
+
+    return slot;
   }
 
-  Serial.println("[vACDM] Żaden serwer nie zwrócił danych.");
-  return "";
+  Serial.println("[vACDM] Żaden serwer nie zwrócił poprawnych danych.");
+  return slot;
 }
 
 String formatTimeShort(const String& isoString) {
@@ -219,8 +286,9 @@ bool isAircraftAirborne(String cid) {
 
 
 
-void displayData(const String& callsign, const String& dataJson) {
+void displayData(const String& callsign, const VacdmSlotInfo& slot) {
   uint16_t ledOrange = tft.color565(229, 135, 55);
+
   if (isAircraftAirborne(cid)) {
     tft.fillScreen(TFT_BLACK);
     tft.setCursor(20, 60);
@@ -228,26 +296,18 @@ void displayData(const String& callsign, const String& dataJson) {
     tft.println("DEPARTED — vACDM OFF");
     return;
   }
+
   tft.fillScreen(TFT_BLACK);
   tft.setTextColor(ledOrange, TFT_BLACK);
   tft.setFreeFont(&doto_regular18pt7b);
 
-  DynamicJsonDocument doc(4096);
-  DeserializationError error = deserializeJson(doc, dataJson);
-  if (error) {
-    tft.setCursor(10, 50);
-    tft.println("JSON ERROR");
-    Serial.println("[vACDM] Błąd JSON: " + String(error.c_str()));
-    return;
-  }
+  // Dane z gotowej struktury
+  String tobt = formatTimeShort(slot.tobt);
+  String tsat = formatTimeShort(slot.tsat);
+  String sid  = slot.sid;
+  String rwy  = slot.runway;
 
-  String tobt = formatTimeShort(doc["vacdm"]["tobt"] | "");
-  String tsat = formatTimeShort(doc["vacdm"]["tsat"] | "");
-  int exot = doc["vacdm"]["exot"] | 0;
-  String rwy = doc["clearance"]["dep_rwy"] | "??";
-  String sid = doc["clearance"]["sid"] | "---";
-
-  // Pozycje pionowe (dostosuj w razie potrzeby)
+  // Pozycje pionowe
   int xCenter = 160;
   int y = 10;
   int lineSpacing = 30;
@@ -255,18 +315,21 @@ void displayData(const String& callsign, const String& dataJson) {
   tft.drawCentreString(callsign, xCenter, y, 1);         y += lineSpacing;
   tft.drawCentreString("TOBT " + tobt, xCenter, y, 1);   y += lineSpacing;
   tft.drawCentreString("TSAT " + tsat, xCenter, y, 1);   y += lineSpacing;
-  // tft.drawCentreString(String(exot), xCenter, y, 1);     y += lineSpacing; // Wywalamy EXOT
+
+  // Różnica czasu do TSAT
   time_t nowUtc = time(nullptr);
-  time_t tsatTime = parseIsoUtcTime(doc["vacdm"]["tsat"] | "");
-
+  time_t tsatTime = parseIsoUtcTime(slot.tsat);
   int diffMin = (int)((nowUtc - tsatTime) / 60);
-  String diffStr = (diffMin > 0 ? "+" : "") + String(diffMin); 
+  String diffStr = (diffMin > 0 ? "+" : "") + String(diffMin);
+  tft.drawCentreString(diffStr, xCenter, y, 1);          y += lineSpacing;
 
-  tft.drawCentreString(diffStr, xCenter, y, 1); y += lineSpacing;
+  // RWY tylko jeśli dostępna
+  if (slot.hasRunway) {
+    tft.drawCentreString("PLANNED RWY " + rwy, xCenter, y, 1); y += lineSpacing;
+  }
 
-  tft.drawCentreString("PLANNED RWY " + rwy, xCenter, y, 1); y += lineSpacing;
   tft.drawCentreString("SID " + sid, xCenter, y, 1);     y += lineSpacing;
 
   // Debug
-  Serial.println("[vACDM] " + callsign + " | TOBT " + tobt + " | TSAT " + tsat + " | EXOT " + String(exot));
+  Serial.println("[vACDM] " + callsign + " | TOBT " + tobt + " | TSAT " + tsat + " | SID " + sid);
 }
