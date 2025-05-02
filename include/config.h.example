@@ -1,0 +1,12 @@
+//Edit this file and save as config.h
+#pragma once
+
+// Wireless Network
+#define WIFI_SSID     ""
+#define WIFI_PASSWORD ""
+
+// CID pilota
+#define VATSIM_CID    ""
+
+// Flaga developerska (pomija sprawdzanie airborne)
+#define SKIP_AIRBORNE_CHECK true
