@@ -228,16 +228,16 @@ VacdmSlotInfo getVacdmData(String callsign) {
   return slot;
 }
 
-String formatTimeShort(const String& timeStr) {
-  if (timeStr.length() >= 16) {
-    // ISO format
-    return timeStr.substring(11, 16) + "Z";
-  } else if (timeStr.length() == 4) {
-    // Format HHMM
-    return timeStr.substring(0, 2) + ":" + timeStr.substring(2, 4) + "Z";
+String formatTimeShort(const String& isoString) {
+  // Sprawdź, czy isoString to wartość domyślna
+  if (isoString == "1969-12-31T23:59:59.999Z") {
+    return "--:--";
   }
-  return "--:--Z";
+  // Sprawdź długość ciągu
+  if (isoString.length() < 16) return "--:--Z";
+  return isoString.substring(11, 16) + "Z";
 }
+
 
 
 
