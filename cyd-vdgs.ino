@@ -24,7 +24,7 @@ struct VacdmSlotInfo {
 };
 
 
-const String vatsim_data_url = "https://data.vatsim.net/v3/vatsim-data.json";
+// const String vatsim_data_url = "https://data.vatsim.net/v3/vatsim-data.json";
 struct VacdmServer {
   String baseUrl;
   bool scandinavianFormat;  // true = /api/v1/pilots/CALLSIGN, false = ?callsign=CALLSIGN
@@ -45,9 +45,13 @@ const size_t vacdm_server_count = sizeof(vacdm_servers) / sizeof(vacdm_servers[0
 
 String getCallsignFromCid(String cid);
 // String getVacdmData(String callsign);
-void displayData(const String& callsign, const String& dataJson);
+//void displayData(const String& callsign, const String& dataJson);
+void displayData(const String& callsign, const VacdmSlotInfo& slot);
+
 
 unsigned long lastUpdate = 0;
+int offlineCount = 0;
+const int offlineThreshold = 3;
 const unsigned long refreshInterval = 30000; // 30 seconds
 
 String cid = VATSIM_CID;
@@ -68,28 +72,31 @@ void setup() {
   
   tft.setFreeFont(&doto_regular18pt7b);
 
-
-  tft.setCursor(50, 50);
-  tft.println("VDGS Display");
-  tft.println("by PLVACC");
+ 
+  tft.setTextColor(TFT_WHITE, TFT_BLACK);
+  tft.drawCentreString("VDGS Display", 160, 40, 1);
+  tft.drawCentreString("by PLVACC",    160, 75, 1);
 
 
   connectToWiFi();
 
   if (WiFi.status() != WL_CONNECTED) {
-    tft.println("Brak połączenia Wi-Fi");
+    tft.println("No WiFi available");
     return;
   }
 
   delay(1000);
-
+  //Check if CID is online
   String callsign = getCallsignFromCid(cid);
-  if (callsign == "") {
-    tft.fillScreen(TFT_BLACK);
-    tft.setCursor(10, 50);
-    tft.println("NO CALLSIGN");
-    return;
-  }
+if (callsign == "") {
+  tft.fillScreen(TFT_BLACK);
+  tft.setTextColor(TFT_RED, TFT_BLACK);
+  tft.setFreeFont(&doto_regular18pt7b);
+  tft.drawCentreString("Waiting for", 160, 60, 1);    // x=160 = środek 320px
+  tft.drawCentreString("login...",     160, 90, 1);
+  
+  return;
+}
 
   VacdmSlotInfo vacdm_slot = getVacdmData(callsign);
   displayData(callsign, vacdm_slot);
@@ -99,11 +106,40 @@ void loop() {
   if (millis() - lastUpdate > refreshInterval) {
     Serial.println("[MAIN] Odświeżanie danych...");
 
-    String callsign = getCallsignFromCid(String(cid)); // użyj zapamiętanego CID
+    String callsign = getCallsignFromCid(cid);
     if (callsign == "") {
-      Serial.println("[MAIN] Brak callsign, przerywam");
+      offlineCount++;
+      Serial.printf("[MAIN] CID offline (attempt %d)\n", offlineCount);
+    
+      tft.fillScreen(TFT_BLACK);
+      tft.setCursor(20, 60);
+      tft.setTextColor(TFT_RED, TFT_BLACK);
+      tft.setFreeFont(&doto_regular18pt7b);
+      
+      if (offlineCount >= offlineThreshold) {
+        tft.drawCentreString("Waiting for", 160, 60, 1);
+        tft.drawCentreString("login...",     160, 90, 1);
+      } else {
+        tft.drawCentreString("User NOT",     160, 60, 1);
+        tft.drawCentreString("logged IN!",   160, 90, 1);
+      }
+    
+      lastUpdate = millis();
       return;
+    } else {
+      if (offlineCount > 0) {
+        Serial.println("[MAIN] CID zalogowany, reset licznika offline");
+      }
+      offlineCount = 0;
     }
+    
+
+
+    // String callsign = getCallsignFromCid(String(cid)); // użyj zapamiętanego CID
+    //if (callsign == "") {
+    //  Serial.println("[MAIN] Brak callsign, przerywam");
+    //  return;
+    // }
 
     VacdmSlotInfo vacdm_data = getVacdmData(callsign);
 
@@ -115,6 +151,8 @@ void loop() {
 
 // Functions from here:
 
+
+// Multiple Wireless networks
 void connectToWiFi() {
   WiFi.mode(WIFI_STA);
   WiFi.begin(WIFI_SSID_1, WIFI_PASSWORD_1);
@@ -154,7 +192,7 @@ void connectToWiFi() {
 }
 
 
-
+// Get callsing for logged user
 String getCallsignFromCid(String cid) {
   String url = "https://api.vatsim.net/v2/members/" + cid + "/status";
   HTTPClient http;
@@ -192,6 +230,7 @@ String getCallsignFromCid(String cid) {
 }
 
 
+// Get ACDM Data
 
 VacdmSlotInfo getVacdmData(String callsign) {
   VacdmSlotInfo slot;
@@ -269,6 +308,7 @@ VacdmSlotInfo getVacdmData(String callsign) {
   return slot;
 }
 
+// Time shortening func
 String formatTimeShort(const String& isoString) {
   // Sprawdź, czy isoString to wartość domyślna
   if (isoString == "1969-12-31T23:59:59.999Z") {
@@ -279,9 +319,7 @@ String formatTimeShort(const String& isoString) {
   return isoString.substring(11, 16) + "Z";
 }
 
-
-
-
+// Time to  ZULU
 time_t parseIsoUtcTime(const String& input) {
   struct tm tm;
   time_t now = time(nullptr);
@@ -308,7 +346,7 @@ time_t parseIsoUtcTime(const String& input) {
   return mktime(&tm);
 }
 
-
+// Check if user aircraft has departed 
 bool isAircraftAirborne(String cid) {
   if (SKIP_AIRBORNE_CHECK) return false;  // nie sprawdzamy
 
@@ -344,6 +382,7 @@ bool isAircraftAirborne(String cid) {
 }
 
 
+// Display data
 
 void displayData(const String& callsign, const VacdmSlotInfo& slot) {
   uint16_t ledOrange = tft.color565(229, 135, 55);
