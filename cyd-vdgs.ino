@@ -4,12 +4,14 @@
 
 #include <TFT_eSPI.h>
 #include <WiFi.h>
+#include <WiFiMulti.h>
 #include <HTTPClient.h>
 #include <ArduinoJson.h>
 #include "doto-regular18pt7b.h"  // VDGS FONT
 #include <time.h>
 #include "include/config.h"
 
+WiFiMulti wifiMulti;
 
 TFT_eSPI tft = TFT_eSPI();
 
@@ -67,19 +69,17 @@ void setup() {
   tft.setFreeFont(&doto_regular18pt7b);
 
 
-  tft.setCursor(20, 20);
+  tft.setCursor(50, 50);
   tft.println("VDGS Display");
   tft.println("by PLVACC");
 
-  WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
-  
-  while (WiFi.status() != WL_CONNECTED) {
-    delay(500);
-    tft.print(".");
-    Serial.print(".");
+
+  connectToWiFi();
+
+  if (WiFi.status() != WL_CONNECTED) {
+    tft.println("Brak połączenia Wi-Fi");
+    return;
   }
-  Serial.println("WiFi connected");
-  tft.println("WiFi OK");
 
   delay(1000);
 
@@ -112,6 +112,47 @@ void loop() {
     lastUpdate = millis();
   }
 }
+
+// Functions from here:
+
+void connectToWiFi() {
+  WiFi.mode(WIFI_STA);
+  WiFi.begin(WIFI_SSID_1, WIFI_PASSWORD_1);
+  Serial.print("Connecting to network: ");
+  Serial.println(WIFI_SSID_1);
+
+  unsigned long startAttemptTime = millis();
+
+  // Czekaj na połączenie przez 10 sekund
+  while (WiFi.status() != WL_CONNECTED && millis() - startAttemptTime < 10000) {
+    delay(500);
+    Serial.print(".");
+  }
+
+  if (WiFi.status() == WL_CONNECTED) {
+    Serial.println("\nNetwork 1 connected");
+    return;
+  }
+
+  // Próba połączenia z drugą siecią
+  WiFi.begin(WIFI_SSID_2, WIFI_PASSWORD_2);
+  Serial.print("\nConnecting to network: ");
+  Serial.println(WIFI_SSID_2);
+
+  startAttemptTime = millis();
+
+  while (WiFi.status() != WL_CONNECTED && millis() - startAttemptTime < 10000) {
+    delay(500);
+    Serial.print(".");
+  }
+
+  if (WiFi.status() == WL_CONNECTED) {
+    Serial.println("\nNetwork 2 connected");
+  } else {
+    Serial.println("\nUnable to connect to WiFi");
+  }
+}
+
 
 
 String getCallsignFromCid(String cid) {
