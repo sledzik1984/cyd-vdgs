@@ -39,6 +39,7 @@ const VacdmServer vacdm_servers[] = {
 };
 const size_t vacdm_server_count = sizeof(vacdm_servers) / sizeof(vacdm_servers[0]);
 
+// Function declarations
 String getCallsignFromCid(const String& cid);
 VacdmSlotInfo getVacdmData(const String& callsign);
 void displayData(const String& callsign, const VacdmSlotInfo& slot);
@@ -54,11 +55,6 @@ const unsigned long refreshInterval = 30000;
 String cid = VATSIM_CID;
 
 void setup() {
-  pinMode(21, OUTPUT);
-  pinMode(21, OUTPUT);
-  digitalWrite(21, HIGH);
-  configTime(0, 0, "pool.ntp.org");
-
   Serial.begin(115200);
   tft.init();
   tft.setRotation(1);
@@ -70,53 +66,55 @@ void setup() {
 
   connectToWiFi();
   if (WiFi.status() != WL_CONNECTED) {
-    tft.println("No WiFi available");
+    tft.drawCentreString("No WiFi available", 160, 120, 1);
     return;
   }
 
   delay(1000);
-  // get callsign and ensure it's available
   String callsign = getCallsignFromCid(cid);
   if (callsign.isEmpty()) {
-    tft.fillScreen(TFT_BLACK);
-    tft.setTextColor(TFT_RED, TFT_BLACK);
-    tft.drawCentreString("Waiting for", 160, 60, 1);
-    tft.drawCentreString("login...",     160, 90, 1);
+    tft.drawCentreString("Waiting for login...", 160, 120, 1);
     return;
   }
-  // Check airborne immediately after obtaining callsign
+
+  // Initial check for airborne
   if (isAircraftAirborne(cid)) {
     tft.fillScreen(TFT_BLACK);
-    tft.setCursor(20, 60);
     tft.setTextColor(TFT_RED, TFT_BLACK);
-    tft.println("DEPARTED — vACDM OFF");
+    tft.drawCentreString("DEPARTED — vACDM OFF", 160, 120, 1);
     return;
   }
 
   VacdmSlotInfo slot = getVacdmData(callsign);
   displayData(callsign, slot);
+  lastUpdate = millis();
 }
 
 void loop() {
   if (millis() - lastUpdate > refreshInterval) {
-    Serial.println("[MAIN] Odświeżanie danych...");
+    Serial.println("[MAIN] Refreshing data...");
     String callsign = getCallsignFromCid(cid);
     if (callsign.isEmpty()) {
       offlineCount++;
-      Serial.printf("[MAIN] CID offline (attempt %d)\n", offlineCount);
       tft.fillScreen(TFT_BLACK);
       tft.setTextColor(TFT_RED, TFT_BLACK);
       if (offlineCount >= offlineThreshold) {
-        tft.drawCentreString("Waiting for", 160, 60, 1);
-        tft.drawCentreString("login...",     160, 90, 1);
+        tft.drawCentreString("Waiting for login...", 160, 120, 1);
       } else {
-        tft.drawCentreString("User NOT",   160, 60, 1);
-        tft.drawCentreString("logged IN!", 160, 90, 1);
+        tft.drawCentreString("User NOT logged IN!", 160, 120, 1);
       }
       lastUpdate = millis();
       return;
     }
     offlineCount = 0;
+
+    if (isAircraftAirborne(cid)) {
+      tft.fillScreen(TFT_BLACK);
+      tft.setTextColor(TFT_RED, TFT_BLACK);
+      tft.drawCentreString("DEPARTED — vACDM OFF", 160, 120, 1);
+      lastUpdate = millis();
+      return;
+    }
 
     VacdmSlotInfo slot = getVacdmData(callsign);
     displayData(callsign, slot);
@@ -126,26 +124,14 @@ void loop() {
 
 void connectToWiFi() {
   WiFi.mode(WIFI_STA);
-  WiFi.begin(WIFI_SSID_1, WIFI_PASSWORD_1);
-  Serial.print("Connecting to network: "); Serial.println(WIFI_SSID_1);
-  unsigned long start = millis();
-  while (WiFi.status() != WL_CONNECTED && millis() - start < 10000) {
-    delay(500); Serial.print('.');
+  wifiMulti.addAP(WIFI_SSID_1, WIFI_PASSWORD_1);
+  wifiMulti.addAP(WIFI_SSID_2, WIFI_PASSWORD_2);
+  Serial.print("Connecting to WiFi...");
+  while (wifiMulti.run() != WL_CONNECTED) {
+    delay(500);
+    Serial.print('.');
   }
-  if (WiFi.status() == WL_CONNECTED) {
-    Serial.println("\nNetwork 1 connected");
-    return;
-  }
-  WiFi.begin(WIFI_SSID_2, WIFI_PASSWORD_2);
-  Serial.print("\nConnecting to network: "); Serial.println(WIFI_SSID_2);
-  start = millis();
-  while (WiFi.status() != WL_CONNECTED && millis() - start < 10000) {
-    delay(500); Serial.print('.');
-  }
-  if (WiFi.status() == WL_CONNECTED)
-    Serial.println("\nNetwork 2 connected");
-  else
-    Serial.println("\nUnable to connect to WiFi");
+  Serial.println(" connected");
 }
 
 String getCallsignFromCid(const String& cid) {
@@ -161,64 +147,52 @@ String getCallsignFromCid(const String& cid) {
   http.end();
 
   StaticJsonDocument<4096> doc;
-  DeserializationError err = deserializeJson(doc, payload);
+  auto err = deserializeJson(doc, payload);
   if (err) {
-    Serial.printf("[VATSIM v2] JSON error: %s\n", err.c_str());
+    Serial.println("[VATSIM v2] JSON parse error");
     return "";
   }
-  return doc["callsign"].is<String>() ? doc["callsign"].as<String>() : String();
+  return doc["callsign"].as<String>();
 }
 
 VacdmSlotInfo getVacdmData(const String& callsign) {
   VacdmSlotInfo slot;
   for (size_t i = 0; i < vacdm_server_count; ++i) {
     const auto& server = vacdm_servers[i];
-    String url;
-    if (server.scandinavianFormat) {
-      url = String(server.baseUrl);
-      url += "/";
-      url += callsign;
-    } else {
-      url = String(server.baseUrl);
-      url += "?callsign=";
-      url += callsign;
-    }
+    String url = String(server.baseUrl);
+    if (server.scandinavianFormat) url += "/" + callsign;
+    else url += "?callsign=" + callsign;
 
     HTTPClient http;
     http.begin(url);
-    int httpCode = http.GET();
-    if (httpCode != 200) {
-      http.end();
-      continue;
-    }
+    int code = http.GET();
+    if (code != 200) { http.end(); continue; }
     String payload = http.getString();
     http.end();
 
     StaticJsonDocument<16384> doc;
-    DeserializationError err = deserializeJson(doc, payload);
+    auto err = deserializeJson(doc, payload);
     if (err) continue;
 
-    if (server.scandinavianFormat && doc.is<JsonArray>()) {
+    if (server.scandinavianFormat) {
       for (JsonObject item : doc.as<JsonArray>()) {
-        if (item["callsign"].as<String>() == callsign) {
-          slot.tobt      = item["vacdm"]["tobt"].as<String>();
-          slot.tsat      = item["vacdm"]["tsat"].as<String>();
-          slot.sid       = item["clearance"]["sid"].as<String>();
+        if (item["callsign"] == callsign) {
+          slot.tobt = item["vacdm"]["tobt"].as<String>();
+          slot.tsat = item["vacdm"]["tsat"].as<String>();
+          slot.sid  = item["clearance"]["sid"].as<String>();
           if (item["clearance"].containsKey("dep_rwy")) {
-            slot.runway    = item["clearance"]["dep_rwy"].as<String>();
+            slot.runway = item["clearance"]["dep_rwy"].as<String>();
             slot.hasRunway = true;
           }
           return slot;
         }
       }
-    } else if (!server.scandinavianFormat && doc.is<JsonObject>()) {
+    } else {
       JsonObject obj = doc.as<JsonObject>();
       slot.tobt = obj["tobt"].as<String>();
       slot.tsat = obj["tsat"].as<String>();
       slot.sid  = obj["sid"].as<String>();
-      if (obj["cdmData"]["ctot"].is<String>()) {
-        slot.ctot = obj["cdmData"]["ctot"].as<String>();
-      }
+      if (obj["cdmData"]["ctot"].is<String>()) slot.ctot = obj["cdmData"]["ctot"].as<String>();
       slot.hasRunway = false;
       return slot;
     }
@@ -239,14 +213,13 @@ time_t parseIsoUtcTime(const String& in) {
     tm.tm_hour = in.substring(0,2).toInt();
     tm.tm_min  = in.substring(2,4).toInt();
   } else if (in.length() >= 16) {
-    tm.tm_year = in.substring(0,4).toInt() - 1900;
-    tm.tm_mon  = in.substring(5,7).toInt() - 1;
+    tm.tm_year = in.substring(0,4).toInt()-1900;
+    tm.tm_mon  = in.substring(5,7).toInt()-1;
     tm.tm_mday = in.substring(8,10).toInt();
     tm.tm_hour = in.substring(11,13).toInt();
     tm.tm_min  = in.substring(14,16).toInt();
   }
-  tm.tm_sec   = 0;
-  tm.tm_isdst = 0;
+  tm.tm_sec = 0; tm.tm_isdst = 0;
   return mktime(&tm);
 }
 
@@ -257,6 +230,7 @@ bool isAircraftAirborne(const String& cid) {
   int code = http.GET();
   if (code != 200) {
     http.end();
+    Serial.printf("[AIRBORNE CHECK] HTTP error: %d\n", code);
     return false;
   }
   auto& stream = http.getStream();
@@ -267,33 +241,36 @@ bool isAircraftAirborne(const String& cid) {
   filter["pilots"][0]["groundspeed"] = true;
 
   StaticJsonDocument<512> doc;
-  DeserializationError err = deserializeJson(doc, stream, DeserializationOption::Filter(filter));
+  auto err = deserializeJson(doc, stream, DeserializationOption::Filter(filter));
   http.end();
   if (err) {
     Serial.printf("[AIRBORNE CHECK] parse error: %s\n", err.c_str());
     return false;
   }
 
+  // Debug: print filtered doc
+  Serial.println("[AIRBORNE CHECK] Filtered JSON:");
+  serializeJsonPretty(doc, Serial);
+  Serial.println("[AIRBORNE CHECK] End of filtered JSON");
+
   for (JsonObject p : doc["pilots"].as<JsonArray>()) {
-    if (p["cid"].as<String>() == cid) {
-      int alt = p["altitude"] | 0;
-      int gs  = p["groundspeed"] | 0;
-      Serial.printf("[AIRBORNE CHECK] ALT: %d ft, GS: %d kt\n", alt, gs);
-      return alt > 1000 && gs > 80;
+    long entryCid = p["cid"].as<long>();
+    int alt = p["altitude"] | 0;
+    int gs  = p["groundspeed"] | 0;
+    Serial.printf("[AIRBORNE CHECK] Entry -> cid: %ld, alt: %d, gs: %d\n", entryCid, alt, gs);
+    if (entryCid == cid.toInt()) {
+      Serial.println("[AIRBORNE CHECK] Matching CID found");
+      bool airborne = alt > 1000 && gs > 80;
+      Serial.printf("[AIRBORNE CHECK] Result: %s\n", airborne ? "true" : "false");
+      return airborne;
     }
   }
+  Serial.println("[AIRBORNE CHECK] CID not found");
   return false;
 }
 
 void displayData(const String& callsign, const VacdmSlotInfo& slot) {
   uint16_t ledOrange = tft.color565(229,135,55);
-  if (isAircraftAirborne(cid)) {
-    tft.fillScreen(TFT_BLACK);
-    tft.setCursor(20, 60);
-    tft.setTextColor(TFT_RED, TFT_BLACK);
-    tft.println("DEPARTED — vACDM OFF");
-    return;
-  }
   tft.fillScreen(TFT_BLACK);
   tft.setTextColor(ledOrange, TFT_BLACK);
   tft.setFreeFont(&doto_regular18pt7b);
@@ -308,8 +285,8 @@ void displayData(const String& callsign, const VacdmSlotInfo& slot) {
   tft.drawCentreString("TSAT " + tsat, x, y, 1); y += sp;
   tft.drawCentreString("CTOT " + ctot, x, y, 1); y += sp;
 
-  int diff = int((time(nullptr) - parseIsoUtcTime(slot.tsat)) / 60);
-  String ds = (diff > 0 ? "+" : "") + String(diff);
+  int diff = (int)((time(nullptr) - parseIsoUtcTime(slot.tsat)) / 60);
+  String ds = (diff>0?"+":"") + String(diff);
   tft.drawCentreString(ds, x, y, 1); y += sp;
 
   if (slot.hasRunway) {
