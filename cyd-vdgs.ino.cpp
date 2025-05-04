@@ -1,3 +1,6 @@
+# 1 "/var/folders/jl/bv3hyqx11mn8kk93x2k6mr_w0000gn/T/tmpyn3ith5j"
+#include <Arduino.h>
+# 1 "/Users/piotr/Downloads/cyd-vdgs/cyd-vdgs.ino"
 #ifndef GFXFF
 #define GFXFF 1
 #endif
@@ -11,11 +14,11 @@
 #include <time.h>
 #include "include/config.h"
 
-// WiFi and display objects
+
 WiFiMulti wifiMulti;
 TFT_eSPI tft;
 
-// Slot info structure
+
 struct VacdmSlotInfo {
   String tobt;
   String tsat;
@@ -25,7 +28,7 @@ struct VacdmSlotInfo {
   bool hasRunway;
 };
 
-// ACDM servers
+
 struct VacdmServer { const char* baseUrl; bool scandinavianFormat; };
 const VacdmServer vacdm_servers[] = {
   {"https://app.vacdm.net/api/v1/pilots", true},
@@ -38,7 +41,7 @@ const VacdmServer vacdm_servers[] = {
 };
 const size_t vacdm_server_count = sizeof(vacdm_servers)/sizeof(vacdm_servers[0]);
 
-// Prototypes
+
 void connectToWiFi();
 String getCallsignFromCid(const String& cid);
 VacdmSlotInfo getVacdmData(const String& callsign);
@@ -47,13 +50,15 @@ String formatTimeShort(const String& t);
 time_t parseIsoUtcTime(const String& in);
 void displayData(const String& callsign, const VacdmSlotInfo& slot);
 
-// Globals
+
 const String cid = VATSIM_CID;
 unsigned long lastUpdate = 0;
 int offlineCount = 0;
 const int offlineThreshold = 3;
 const unsigned long refreshInterval = 30000;
-
+void setup();
+void loop();
+#line 57 "/Users/piotr/Downloads/cyd-vdgs/cyd-vdgs.ino"
 void setup() {
   Serial.begin(115200);
   tft.init();
@@ -62,7 +67,7 @@ void setup() {
   tft.setFreeFont(&doto_regular18pt7b);
   tft.setTextColor(TFT_WHITE, TFT_BLACK);
   tft.drawCentreString("VDGS Display", 160, 40, 1);
-  tft.drawCentreString("by PLVACC",    160, 75, 1);
+  tft.drawCentreString("by PLVACC", 160, 75, 1);
 
   connectToWiFi();
   Serial.print("Connected to SSID: "); Serial.println(WiFi.SSID());
@@ -74,7 +79,7 @@ void setup() {
     return;
   }
 
-  // Check airborne immediately
+
   if (isAircraftAirborne(cid)) {
     tft.fillScreen(TFT_BLACK);
     tft.setTextColor(TFT_RED, TFT_BLACK);
@@ -150,7 +155,7 @@ VacdmSlotInfo getVacdmData(const String& callsign) {
   for (auto& srv : vacdm_servers) {
     String url = String(srv.baseUrl);
     if (srv.scandinavianFormat) url += "/" + callsign;
-    else                       url += "?callsign=" + callsign;
+    else url += "?callsign=" + callsign;
 
     HTTPClient http;
     http.begin(url);
@@ -163,7 +168,7 @@ VacdmSlotInfo getVacdmData(const String& callsign) {
             if (item["callsign"] == callsign) {
               slot.tobt = item["vacdm"]["tobt"].as<String>();
               slot.tsat = item["vacdm"]["tsat"].as<String>();
-              slot.sid  = item["clearance"]["sid"].as<String>();
+              slot.sid = item["clearance"]["sid"].as<String>();
               if (item["clearance"].containsKey("dep_rwy")) {
                 slot.runway = item["clearance"]["dep_rwy"].as<String>();
                 slot.hasRunway = true;
@@ -175,7 +180,7 @@ VacdmSlotInfo getVacdmData(const String& callsign) {
           JsonObject obj = doc.as<JsonObject>();
           slot.tobt = obj["tobt"].as<String>();
           slot.tsat = obj["tsat"].as<String>();
-          slot.sid  = obj["sid"].as<String>();
+          slot.sid = obj["sid"].as<String>();
           if (obj["cdmData"]["ctot"].is<String>())
             slot.ctot = obj["cdmData"]["ctot"].as<String>();
           return slot;
@@ -198,7 +203,7 @@ bool isAircraftAirborne(const String& cid) {
   }
   WiFiClient& s = http.getStream();
 
-  // Scan stream for "cid":<cid>
+
   String marker = String("\"cid\":") + cid;
   if (s.find(marker.c_str())) {
     if (s.find("\"altitude\":")) {
@@ -228,7 +233,7 @@ time_t parseIsoUtcTime(const String& in) {
   gmtime_r(&now,&tm);
   if (in.length()==4) {
     tm.tm_hour = in.substring(0,2).toInt();
-    tm.tm_min  = in.substring(2,4).toInt();
+    tm.tm_min = in.substring(2,4).toInt();
   }
   tm.tm_sec=0;tm.tm_isdst=0;
   return mktime(&tm);
