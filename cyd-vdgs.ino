@@ -75,12 +75,21 @@ void setup() {
   }
 
   delay(1000);
+  // get callsign and ensure it's available
   String callsign = getCallsignFromCid(cid);
   if (callsign.isEmpty()) {
     tft.fillScreen(TFT_BLACK);
     tft.setTextColor(TFT_RED, TFT_BLACK);
     tft.drawCentreString("Waiting for", 160, 60, 1);
     tft.drawCentreString("login...",     160, 90, 1);
+    return;
+  }
+  // Check airborne immediately after obtaining callsign
+  if (isAircraftAirborne(cid)) {
+    tft.fillScreen(TFT_BLACK);
+    tft.setCursor(20, 60);
+    tft.setTextColor(TFT_RED, TFT_BLACK);
+    tft.println("DEPARTED — vACDM OFF");
     return;
   }
 
